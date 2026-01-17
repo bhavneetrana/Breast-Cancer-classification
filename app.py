@@ -1,7 +1,6 @@
 import streamlit as st
 import tensorflow as tf
 import numpy as np
-import pandas as pd
 from PIL import Image
 import tensorflow.keras.backend as K
 from tensorflow.keras.layers import Layer
@@ -18,22 +17,22 @@ st.set_page_config(
 )
 
 # ======================================================
-# HERO / PROJECT INTRO SECTION
+# HERO / INTRO SECTION
 # ======================================================
 st.markdown("""
 <div style="
     background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-    padding: 40px;
-    border-radius: 18px;
-    margin-bottom: 30px;
+    padding: 45px;
+    border-radius: 20px;
+    margin-bottom: 35px;
 ">
     <h1 style="color:white;">🔬 Breast Cancer Classification Using Deep Learning</h1>
-    <p style="color:#dcdcdc; font-size:17px;">
+    <p style="color:#e0e0e0; font-size:17px;">
         This AI-powered web application detects <b>Breast Cancer</b> from 
-        <b>histopathology images</b> using a deep learning model based on 
+        <b>histopathology images</b> using a deep learning model based on
         <b>CNN, BiLSTM, and Attention mechanism</b>.
     </p>
-    <p style="color:#b0bec5;">
+    <p style="color:#cfd8dc;">
         The system predicts whether the tumor is <b>Benign</b> or <b>Malignant</b>,
         supporting early diagnosis and medical research.
     </p>
@@ -58,10 +57,18 @@ class Attention(Layer):
         super().__init__(**kwargs)
 
     def build(self, input_shape):
-        self.W = self.add_weight("att_weight", (input_shape[-1], 1),
-                                 initializer="glorot_uniform", trainable=True)
-        self.b = self.add_weight("att_bias", (input_shape[1], 1),
-                                 initializer="zeros", trainable=True)
+        self.W = self.add_weight(
+            name="att_weight",
+            shape=(input_shape[-1], 1),
+            initializer="glorot_uniform",
+            trainable=True
+        )
+        self.b = self.add_weight(
+            name="att_bias",
+            shape=(input_shape[1], 1),
+            initializer="zeros",
+            trainable=True
+        )
         super().build(input_shape)
 
     def call(self, x):
@@ -90,7 +97,7 @@ col1, col2 = st.columns([1, 1])
 with col1:
     st.markdown("### 📸 Upload Histopathology Image")
     uploaded_file = st.file_uploader(
-        "Upload JPG / PNG image (96×96)",
+        "Upload JPG or PNG image (96×96)",
         type=["jpg", "png", "jpeg"]
     )
 
@@ -107,24 +114,24 @@ with col2:
 
         if st.button("🚀 Analyze Image"):
             model = load_trained_model()
-            pred = model.predict(img_array, verbose=0)[0][0]
-            risk = float(pred * 100)
+            prediction = model.predict(img_array, verbose=0)[0][0]
+            risk_pct = float(prediction * 100)
 
-            color = "#4CAF50" if risk < 30 else "#FF9800" if risk < 70 else "#F44336"
+            color = "#4CAF50" if risk_pct < 30 else "#FF9800" if risk_pct < 70 else "#F44336"
 
             st.markdown(f"""
             <div style="
                 background-color:#111827;
-                padding:25px;
-                border-radius:15px;
+                padding:28px;
+                border-radius:16px;
                 text-align:center;
                 border:1px solid #1f2937;
             ">
-                <h2 style="color:{color};">Cancer Risk: {risk:.1f}%</h2>
+                <h2 style="color:{color};">Cancer Risk: {risk_pct:.1f}%</h2>
             </div>
             """, unsafe_allow_html=True)
 
-            if risk > 50:
+            if risk_pct > 50:
                 st.error("### 🔴 Malignant Tumor Detected")
             else:
                 st.success("### 🟢 Benign / Non-Cancerous")
@@ -139,19 +146,22 @@ st.markdown("---")
 st.markdown("""
 <div style="
     background-color:#0e1117;
-    padding:30px;
-    border-radius:15px;
+    padding:35px;
+    border-radius:18px;
     border:1px solid #262730;
 ">
+
     <h2 style="color:#4CAF50;">📌 About This Project</h2>
-    <p>
+    <p style="font-size:16px; line-height:1.6;">
         This project demonstrates the application of <b>Deep Learning</b> in 
-        <b>Medical Image Analysis</b> for Breast Cancer classification using
-        a hybrid CNN–BiLSTM–Attention architecture.
+        <b>Medical Image Analysis</b> for Breast Cancer classification using a
+        hybrid <b>CNN–BiLSTM–Attention</b> architecture.
     </p>
 
+    <hr style="border:0.5px solid #262730; margin:25px 0;">
+
     <h3 style="color:#03A9F4;">🧠 Model Details</h3>
-    <ul>
+    <ul style="font-size:15px; line-height:1.8;">
         <li><b>Architecture:</b> CNN + BiLSTM + Attention</li>
         <li><b>Base Model:</b> MobileNetV2</li>
         <li><b>Input Size:</b> 96 × 96 × 3</li>
@@ -159,27 +169,23 @@ st.markdown("""
         <li><b>Framework:</b> TensorFlow & Keras</li>
     </ul>
 
+    <hr style="border:0.5px solid #262730; margin:25px 0;">
+
     <h3 style="color:#FF9800;">👨‍💻 Developer</h3>
-    <ul>
+    <ul style="font-size:15px; line-height:1.8;">
         <li><b>Name:</b> Bhavneet Rana</li>
-        <li><b>Role:</b> Student | AI & ML Enthusiast</li>
+        <li><b>Role:</b> Student | AI & Machine Learning Enthusiast</li>
         <li><b>Skills:</b> Python, Deep Learning, TensorFlow, Computer Vision</li>
         <li><b>Project Type:</b> Academic / Research</li>
     </ul>
 
-    <p style="font-size:14px; color:#9e9e9e;">
-        ⚠️ <b>Disclaimer:</b> This application is for educational and research purposes only.
+    <p style="font-size:14px; color:#9e9e9e; margin-top:25px;">
+        ⚠️ <b>Disclaimer:</b> This application is for educational and research 
+        purposes only and should not be used as a substitute for professional 
+        medical diagnosis.
     </p>
+
 </div>
 """, unsafe_allow_html=True)
 
 st.sidebar.warning("⚠️ Educational use only. Not a medical diagnosis tool.")
-
-
-
-
-
-
-
-
-
