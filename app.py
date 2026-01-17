@@ -150,43 +150,43 @@ st.markdown("---")
 
 st.markdown("""
 <div style="
-    background-color:#0e1117;
-    padding:35px;
-    border-radius:18px;
+    background: linear-gradient(180deg, #0e1117, #111827);
+    padding:40px;
+    border-radius:22px;
     border:1px solid #262730;
+    box-shadow: 0px 8px 25px rgba(0,0,0,0.35);
 ">
 
-    <h2 style="color:#4CAF50;">📌 About This Project</h2>
-    <p style="font-size:16px; line-height:1.6;">
-        This project demonstrates the application of <b>Deep Learning</b> in 
-        <b>Medical Image Analysis</b> for Breast Cancer classification using a
-        hybrid <b>CNN–BiLSTM–Attention</b> architecture.
+    <!-- ABOUT PROJECT -->
+    <h2 style="color:#4CAF50; margin-bottom:15px;">📌 About This Project</h2>
+    <p style="font-size:16px; line-height:1.7; color:#d1d5db;">
+        This project focuses on applying <b>Artificial Intelligence and Deep Learning</b>
+        techniques to the field of <b>medical image analysis</b>.
+        The system analyzes histopathology images to assist in the detection of
+        <b>Breast Cancer</b> by classifying samples as <b>Benign</b> or <b>Malignant</b>.
     </p>
 
-    <hr style="border:0.5px solid #262730; margin:25px 0;">
+    <p style="font-size:16px; line-height:1.7; color:#d1d5db;">
+        The application is built as an interactive web interface using
+        <b>Streamlit</b> and a trained deep learning model, making it suitable for
+        academic demonstrations, research exploration, and portfolio presentation.
+    </p>
 
-    <h3 style="color:#03A9F4;">🧠 Model Details</h3>
-    <ul style="font-size:15px; line-height:1.8;">
-        <li><b>Architecture:</b> CNN + BiLSTM + Attention</li>
-        <li><b>Base Model:</b> MobileNetV2</li>
-        <li><b>Input Size:</b> 96 × 96 × 3</li>
-        <li><b>Output:</b> Benign / Malignant</li>
-        <li><b>Framework:</b> TensorFlow & Keras</li>
+    <div style="height:1px; background:#262730; margin:30px 0;"></div>
+
+    <!-- DEVELOPER DETAILS -->
+    <h2 style="color:#FF9800; margin-bottom:15px;">👨‍💻 Developer Details</h2>
+    <ul style="font-size:15px; line-height:1.9; color:#e5e7eb; list-style:none; padding-left:0;">
+        <li>👤 <b>Name:</b> Bhavneet Rana</li>
+        <li>🎓 <b>Role:</b> Student | AI & Machine Learning Enthusiast</li>
+        <li>💡 <b>Interests:</b> Deep Learning, Computer Vision, Healthcare AI</li>
+        <li>🛠️ <b>Skills:</b> Python, TensorFlow, Keras, Streamlit</li>
+        <li>📘 <b>Project Type:</b> Academic / Research</li>
     </ul>
 
-    <hr style="border:0.5px solid #262730; margin:25px 0;">
-
-    <h3 style="color:#FF9800;">👨‍💻 Developer</h3>
-    <ul style="font-size:15px; line-height:1.8;">
-        <li><b>Name:</b> Bhavneet Rana</li>
-        <li><b>Role:</b> Student | AI & Machine Learning Enthusiast</li>
-        <li><b>Skills:</b> Python, Deep Learning, TensorFlow, Computer Vision</li>
-        <li><b>Project Type:</b> Academic / Research</li>
-    </ul>
-
-    <p style="font-size:14px; color:#9e9e9e; margin-top:25px;">
-        ⚠️ <b>Disclaimer:</b> This application is for educational and research 
-        purposes only and should not be used as a substitute for professional 
+    <p style="font-size:14px; color:#9e9e9e; margin-top:28px;">
+        ⚠️ <b>Disclaimer:</b> This application is intended for educational and research
+        purposes only and should not be used as a substitute for professional
         medical diagnosis.
     </p>
 
@@ -194,5 +194,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.sidebar.warning("⚠️ Educational use only. Not a medical diagnosis tool.")
+
+
 
 
