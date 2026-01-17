@@ -20,7 +20,8 @@ st.set_page_config(
 # ======================================================
 # DOWNLOAD MODEL FROM GITHUB RELEASE (ONE TIME)
 # ======================================================
-MODEL_URL = "PASTE_YOUR_GITHUB_RELEASE_DOWNLOAD_URL_HERE"
+MODEL_URL = https://github.com/bhavneetrana/Breast-Cancer-classification/releases/download/v1.0/cnn_bilstm_attention_model.h5
+
 MODEL_PATH = "cnn_bilstm_attention_model.h5"
 
 if not os.path.exists(MODEL_PATH):
@@ -169,4 +170,5 @@ with st.sidebar:
         st.write("No scans analyzed yet.")
 
 st.sidebar.warning("⚠️ Disclaimer: This tool is for educational use only.")
+
 
