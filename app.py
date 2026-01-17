@@ -27,7 +27,7 @@ st.markdown("""
     margin-bottom: 35px;
 ">
     <h1 style="color:white;">🔬 Breast Cancer Classification Using Deep Learning</h1>
-    <p style="color:#e0e0e0; font-size:17px;">
+    <p style="color:#e0e0e0; font-size:17px; line-height:1.6;">
         This AI-powered web application detects <b>Breast Cancer</b> from 
         <b>histopathology images</b> using a deep learning model based on
         <b>CNN, BiLSTM, and Attention mechanism</b>.
@@ -50,7 +50,7 @@ if not os.path.exists(MODEL_PATH):
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
 # ======================================================
-# CUSTOM ATTENTION LAYER
+# CUSTOM ATTENTION LAYER (KERAS 3 SAFE)
 # ======================================================
 class Attention(Layer):
     def __init__(self, **kwargs):
@@ -76,6 +76,9 @@ class Attention(Layer):
         a = K.softmax(e, axis=1)
         return K.sum(x * a, axis=1)
 
+    def get_config(self):
+        return super().get_config()
+
 # ======================================================
 # LOAD TRAINED MODEL
 # ======================================================
@@ -92,7 +95,7 @@ def load_trained_model():
 # ======================================================
 st.markdown("## 🧠 AI Breast Cancer Diagnostic System")
 
-col1, col2 = st.columns([1, 1])
+col1, col2 = st.columns([1, 1], gap="large")
 
 with col1:
     st.markdown("### 📸 Upload Histopathology Image")
@@ -112,7 +115,7 @@ with col2:
         img = image.resize((96, 96))
         img_array = np.expand_dims(np.array(img) / 255.0, axis=0)
 
-        if st.button("🚀 Analyze Image"):
+        if st.button("🚀 Analyze Image", use_container_width=True):
             model = load_trained_model()
             prediction = model.predict(img_array, verbose=0)[0][0]
             risk_pct = float(prediction * 100)
@@ -122,12 +125,14 @@ with col2:
             st.markdown(f"""
             <div style="
                 background-color:#111827;
-                padding:28px;
+                padding:30px;
                 border-radius:16px;
                 text-align:center;
                 border:1px solid #1f2937;
             ">
-                <h2 style="color:{color};">Cancer Risk: {risk_pct:.1f}%</h2>
+                <h2 style="color:{color}; margin-bottom:10px;">
+                    Cancer Risk: {risk_pct:.1f}%
+                </h2>
             </div>
             """, unsafe_allow_html=True)
 
@@ -139,7 +144,7 @@ with col2:
         st.info("Upload a medical image to begin analysis.")
 
 # ======================================================
-# FOOTER / ABOUT SECTION (BOTTOM)
+# FOOTER / ABOUT SECTION
 # ======================================================
 st.markdown("---")
 
@@ -189,3 +194,5 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.sidebar.warning("⚠️ Educational use only. Not a medical diagnosis tool.")
+
+
