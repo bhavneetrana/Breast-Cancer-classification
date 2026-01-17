@@ -21,7 +21,6 @@ st.set_page_config(
 # DOWNLOAD MODEL FROM GITHUB RELEASE (ONE TIME)
 # ======================================================
 MODEL_URL = "https://github.com/bhavneetrana/Breast-Cancer-classification/releases/download/v1.0/cnn_bilstm_attention_model.h5"
-
 MODEL_PATH = "cnn_bilstm_attention_model.h5"
 
 if not os.path.exists(MODEL_PATH):
@@ -29,7 +28,7 @@ if not os.path.exists(MODEL_PATH):
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
 # ======================================================
-# ATTENTION LAYER (REQUIRED FOR LOADING MODEL)
+# CUSTOM ATTENTION LAYER
 # ======================================================
 class Attention(Layer):
     def __init__(self, **kwargs):
@@ -48,7 +47,7 @@ class Attention(Layer):
             initializer="zeros",
             trainable=True
         )
-        super(Attention, self).build(input_shape)
+        super().build(input_shape)
 
     def call(self, x):
         e = K.tanh(K.dot(x, self.W) + self.b)
@@ -65,7 +64,8 @@ class Attention(Layer):
 def load_trained_model():
     return tf.keras.models.load_model(
         MODEL_PATH,
-        custom_objects={"Attention": Attention}
+        custom_objects={"Attention": Attention},
+        compile=False   # 🔥 REQUIRED FOR TF 2.20
     )
 
 # ======================================================
@@ -115,7 +115,7 @@ with col2:
 
         if st.button("🚀 Run AI Analysis"):
             model = load_trained_model()
-            prediction = model.predict(img_array)[0][0]
+            prediction = model.predict(img_array, verbose=0)[0][0]
             risk_pct = float(prediction * 100)
 
             color = "green" if risk_pct < 30 else "orange" if risk_pct < 70 else "red"
@@ -170,6 +170,8 @@ with st.sidebar:
         st.write("No scans analyzed yet.")
 
 st.sidebar.warning("⚠️ Disclaimer: This tool is for educational use only.")
+
+
 
 
 
