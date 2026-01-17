@@ -12,10 +12,32 @@ import urllib.request
 # PAGE CONFIG
 # ======================================================
 st.set_page_config(
-    page_title="AI Breast Cancer Diagnostic",
+    page_title="Breast Cancer Classification Using Deep Learning",
     page_icon="🔬",
     layout="wide"
 )
+
+# ======================================================
+# SEO / PROJECT DESCRIPTION (VERY IMPORTANT)
+# ======================================================
+st.markdown("""
+# 🔬 Breast Cancer Classification Using Deep Learning
+
+This web application performs **breast cancer detection** using a **deep learning model**
+based on **CNN, BiLSTM, and Attention mechanism**.
+
+The system analyzes **histopathology images** and predicts whether the tumor is
+**Benign or Malignant**, helping in early cancer diagnosis.
+
+### 🔑 Keywords
+Breast Cancer Detection, Deep Learning, CNN, BiLSTM, Attention Model,  
+Medical Image Classification, TensorFlow, Streamlit, AI in Healthcare
+
+**Author:** Bhavneet Rana  
+**Tech Stack:** Python, TensorFlow, Deep Learning, Streamlit
+""")
+
+st.divider()
 
 # ======================================================
 # DOWNLOAD MODEL FROM GITHUB RELEASE (ONE TIME)
@@ -58,62 +80,43 @@ class Attention(Layer):
         return super().get_config()
 
 # ======================================================
-# LOAD TRAINED MODEL (CACHED)
+# LOAD TRAINED MODEL
 # ======================================================
 @st.cache_resource
 def load_trained_model():
     return tf.keras.models.load_model(
         MODEL_PATH,
         custom_objects={"Attention": Attention},
-        compile=False   # 🔥 REQUIRED FOR TF 2.20
+        compile=False
     )
 
 # ======================================================
-# CUSTOM CSS
+# APP UI
 # ======================================================
-st.markdown("""
-<style>
-.stProgress > div > div > div > div { background-color: #ff4b4b; }
-.report-card {
-    background-color: #ffffff;
-    padding: 20px;
-    border-radius: 10px;
-    border: 1px solid #e6e9ef;
-}
-</style>
-""", unsafe_allow_html=True)
+st.title("🧠 AI Breast Cancer Diagnostic System")
 
-# ======================================================
-# APP TITLE
-# ======================================================
-st.title("🔬 Breast Cancer AI Diagnostic System")
-st.divider()
-
-# ======================================================
-# MAIN CONTENT
-# ======================================================
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.subheader("📸 Upload Histopathology Slide")
+    st.subheader("📸 Upload Histopathology Image")
     uploaded_file = st.file_uploader(
-        "Select JPG or PNG image (96×96 trained size)",
+        "Upload JPG or PNG image (96×96)",
         type=["jpg", "png", "jpeg"]
     )
 
     if uploaded_file:
         image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, caption="Uploaded Slide", use_container_width=True)
+        st.image(image, caption="Uploaded Medical Image", use_container_width=True)
 
 with col2:
-    st.subheader("📊 Diagnostic Analysis")
+    st.subheader("📊 Prediction Result")
 
     if uploaded_file:
         img_resized = image.resize((96, 96))
         img_array = np.array(img_resized) / 255.0
         img_array = np.expand_dims(img_array, axis=0)
 
-        if st.button("🚀 Run AI Analysis"):
+        if st.button("🚀 Analyze Image"):
             model = load_trained_model()
             prediction = model.predict(img_array, verbose=0)[0][0]
             risk_pct = float(prediction * 100)
@@ -122,54 +125,24 @@ with col2:
 
             st.markdown(f"""
             <div style="background-color:#f0f2f6;border-radius:10px;padding:20px;text-align:center;">
-                <h3 style="color:{color};">MALIGNANCY RISK: {risk_pct:.1f}%</h3>
-                <div style="background-color:#ddd;border-radius:20px;height:30px;">
-                    <div style="background-color:{color};width:{risk_pct}%;height:30px;border-radius:20px;"></div>
-                </div>
+                <h3 style="color:{color};">Cancer Risk: {risk_pct:.1f}%</h3>
             </div>
             """, unsafe_allow_html=True)
 
-            st.markdown("---")
-
             if risk_pct > 50:
-                st.error("### Result: MALIGNANT DETECTED")
-                st.write("Patterns indicate possible Invasive Ductal Carcinoma.")
+                st.error("### Malignant Tumor Detected")
             else:
-                st.success("### Result: BENIGN / HEALTHY")
-                st.write("No significant malignant patterns detected.")
+                st.success("### Benign / Non-Cancerous")
 
-            if "history" not in st.session_state:
-                st.session_state.history = []
-
-            st.session_state.history.append({
-                "File": uploaded_file.name,
-                "Risk": f"{risk_pct:.1f}%",
-                "Status": "Malignant" if risk_pct > 50 else "Benign"
-            })
     else:
-        st.info("Waiting for a tissue slide upload...")
+        st.info("Upload a medical image to begin analysis.")
 
 # ======================================================
-# SIDEBAR HISTORY
+# DISCLAIMER
 # ======================================================
-with st.sidebar:
-    st.header("🕒 Prediction History")
+st.sidebar.warning("⚠️ This application is for educational and research purposes only.")
 
-    if "history" in st.session_state and st.session_state.history:
-        history_df = pd.DataFrame(st.session_state.history)
-        st.dataframe(history_df, use_container_width=True)
 
-        csv = history_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "📥 Download Report",
-            data=csv,
-            file_name="biopsy_results.csv",
-            mime="text/csv"
-        )
-    else:
-        st.write("No scans analyzed yet.")
-
-st.sidebar.warning("⚠️ Disclaimer: This tool is for educational use only.")
 
 
 
