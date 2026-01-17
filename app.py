@@ -20,24 +20,51 @@ st.set_page_config(
 # ======================================================
 # SEO / PROJECT DESCRIPTION (VERY IMPORTANT)
 # ======================================================
+# ======================================================
+# FOOTER / ABOUT SECTION
+# ======================================================
+st.markdown("---")
+
 st.markdown("""
-# 🔬 Breast Cancer Classification Using Deep Learning
+<div style="
+    background-color:#0e1117;
+    padding:30px;
+    border-radius:15px;
+    border:1px solid #262730;
+">
+    <h2 style="color:#4CAF50;">📌 About This Project</h2>
+    <p style="font-size:16px;">
+        This AI-based Breast Cancer Classification system uses a deep learning
+        architecture combining <b>CNN, BiLSTM, and Attention mechanism</b>
+        to analyze histopathology images and predict whether a tumor is
+        <b>Benign or Malignant</b>.
+    </p>
 
-This web application performs **breast cancer detection** using a **deep learning model**
-based on **CNN, BiLSTM, and Attention mechanism**.
+    <h3 style="color:#03A9F4;">🧠 Model Details</h3>
+    <ul style="font-size:15px;">
+        <li><b>Architecture:</b> CNN + BiLSTM + Attention</li>
+        <li><b>Base Model:</b> MobileNetV2 (Feature Extraction)</li>
+        <li><b>Input Image Size:</b> 96 × 96 × 3</li>
+        <li><b>Output:</b> Binary Classification (Benign / Malignant)</li>
+        <li><b>Framework:</b> TensorFlow & Keras</li>
+    </ul>
 
-The system analyzes **histopathology images** and predicts whether the tumor is
-**Benign or Malignant**, helping in early cancer diagnosis.
+    <h3 style="color:#FF9800;">👨‍💻 About the Developer</h3>
+    <ul style="font-size:15px;">
+        <li><b>Name:</b> Bhavneet Rana</li>
+        <li><b>Role:</b> Student | AI & Machine Learning Enthusiast</li>
+        <li><b>Skills:</b> Python, Deep Learning, TensorFlow, Computer Vision</li>
+        <li><b>Project Type:</b> Academic & Research Project</li>
+    </ul>
 
-### 🔑 Keywords
-Breast Cancer Detection, Deep Learning, CNN, BiLSTM, Attention Model,  
-Medical Image Classification, TensorFlow, Streamlit, AI in Healthcare
+    <p style="font-size:14px; color:#9e9e9e; margin-top:20px;">
+        ⚠️ <b>Disclaimer:</b> This application is for educational and research
+        purposes only and should not be used as a substitute for professional
+        medical diagnosis.
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
-**Author:** Bhavneet Rana  
-**Tech Stack:** Python, TensorFlow, Deep Learning, Streamlit
-""")
-
-st.divider()
 
 # ======================================================
 # DOWNLOAD MODEL FROM GITHUB RELEASE (ONE TIME)
@@ -141,6 +168,7 @@ with col2:
 # DISCLAIMER
 # ======================================================
 st.sidebar.warning("⚠️ This application is for educational and research purposes only.")
+
 
 
 
