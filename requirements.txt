@@ -1,9 +1,10 @@
-tensorflow==2.20.0
 streamlit
+tensorflow
 numpy
-pandas
 pillow
-scikit-learn
+pandas
+reportlab
+
 
 
 
