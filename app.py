@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 # ======================================================
-# CUSTOM ATTENTION LAYER (REQUIRED FOR MODEL LOAD)
+# CUSTOM ATTENTION LAYER
 # ======================================================
 @tf.keras.utils.register_keras_serializable(package="Custom")
 class Attention(tf.keras.layers.Layer):
@@ -47,7 +47,7 @@ class Attention(tf.keras.layers.Layer):
         return super().get_config()
 
 # ======================================================
-# GRAD-CAM (ROBUST FOR NESTED CNNs)
+# SAFE GRAD-CAM (FAIL-GRACEFULLY)
 # ======================================================
 def find_last_conv_layer_recursive(model):
     for layer in reversed(model.layers):
@@ -61,35 +61,43 @@ def find_last_conv_layer_recursive(model):
     raise ValueError("No Conv2D layer found.")
 
 def generate_gradcam(img_batch, model, original_img):
+    """
+    Safe Grad-CAM for CNN + BiLSTM + Attention.
+    Returns None if Grad-CAM cannot be computed.
+    """
     try:
         conv_layer = find_last_conv_layer_recursive(model)
-    except ValueError:
+
+        grad_model = tf.keras.models.Model(
+            inputs=model.inputs,
+            outputs=[conv_layer.output, model.outputs[0]]
+        )
+
+        with tf.GradientTape() as tape:
+            conv_out, preds = grad_model(img_batch)
+            loss = preds[:, 0]
+
+        grads = tape.gradient(loss, conv_out)
+        if grads is None:
+            return None
+
+        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+        conv_out = conv_out[0]
+
+        heatmap = tf.reduce_sum(conv_out * pooled_grads, axis=-1)
+        heatmap = tf.maximum(heatmap, 0)
+        heatmap /= tf.reduce_max(heatmap) + 1e-8
+
+        heatmap = cv2.resize(heatmap.numpy(), original_img.size)
+        heatmap = np.uint8(255 * heatmap)
+        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+
+        return cv2.addWeighted(
+            np.array(original_img), 0.6, heatmap, 0.4, 0
+        )
+
+    except Exception:
         return None
-
-    grad_model = tf.keras.models.Model(
-        inputs=model.inputs,
-        outputs=[conv_layer.output, model.output]
-    )
-
-    with tf.GradientTape() as tape:
-        conv_out, preds = grad_model(img_batch)
-        loss = preds[:, 0]
-
-    grads = tape.gradient(loss, conv_out)
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-
-    conv_out = conv_out[0]
-    heatmap = conv_out @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(heatmap)
-
-    heatmap = tf.maximum(heatmap, 0)
-    heatmap /= tf.reduce_max(heatmap) + 1e-8
-
-    heatmap = cv2.resize(heatmap.numpy(), original_img.size)
-    heatmap = np.uint8(255 * heatmap)
-    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-
-    return cv2.addWeighted(np.array(original_img), 0.6, heatmap, 0.4, 0)
 
 # ======================================================
 # MODEL LOADING
@@ -108,26 +116,26 @@ def load_model():
     )
 
 # ======================================================
-# UI – HEADER
+# UI HEADER
 # ======================================================
 st.title("🔬 OncoVision – Histopathology Patch Analyzer")
 st.markdown("""
-This system analyzes **individual 96×96 histopathology patches** and detects  
-**tumor-like patterns** learned from the **PCam dataset**.
+This system analyzes **individual 96×96 histopathology patches** using a  
+**CNN + BiLSTM + Attention** model trained on the **PCam dataset**.
 
-⚠️ **Not a clinical diagnosis tool**
+⚠️ **Educational & research use only – NOT a medical diagnosis**
 """)
 st.divider()
 
 # ======================================================
-# UI – MAIN
+# MAIN UI
 # ======================================================
 col1, col2 = st.columns(2, gap="large")
 
 with col1:
     st.subheader("📸 Upload Patch Image")
     file = st.file_uploader(
-        "Upload histopathology patch (96×96 recommended)",
+        "Upload histopathology patch (JPG / PNG)",
         type=["jpg", "jpeg", "png"]
     )
 
@@ -141,7 +149,7 @@ with col2:
     if file and st.button("🚀 Run Analysis", use_container_width=True):
         model = load_model()
 
-        # --- PREPROCESSING (MATCHES PCam) ---
+        # --- PREPROCESSING (PCam-consistent) ---
         img_resized = image.resize((96, 96), Image.Resampling.LANCZOS)
         img_array = np.array(img_resized).astype("float32") / 255.0
         img_batch = np.expand_dims(img_array, axis=0)
@@ -149,25 +157,21 @@ with col2:
         # --- INFERENCE ---
         score = float(model.predict(img_batch, verbose=0)[0][0])
 
-        st.markdown("### 📊 Prediction Confidence")
+        st.markdown("### 📊 Model Output")
         st.progress(score)
 
         # --- UNCERTAINTY-AWARE INTERPRETATION ---
         if score >= 0.85:
-            verdict = "🟥 Strong tumor-like patterns detected"
-            reliability = "High confidence"
-            color = "error"
+            st.error("🟥 Strong tumor-like patterns detected (high confidence)")
+            confidence_note = "High confidence"
         elif score <= 0.15:
-            verdict = "🟩 No strong tumor-like patterns detected"
-            reliability = "High confidence"
-            color = "success"
+            st.success("🟩 No strong tumor-like patterns detected (high confidence)")
+            confidence_note = "High confidence"
         else:
-            verdict = "🟨 Uncertain prediction"
-            reliability = "Low confidence – expert review recommended"
-            color = "warning"
+            st.warning("🟨 Uncertain prediction – expert review recommended")
+            confidence_note = "Low confidence"
 
-        getattr(st, color)(f"**Result:** {verdict}")
-        st.caption(f"Model output score: **{score:.3f}** | {reliability}")
+        st.caption(f"Raw model score: **{score:.3f}** | {confidence_note}")
 
         st.divider()
 
@@ -177,11 +181,13 @@ with col2:
             if cam is not None:
                 st.image(
                     cam,
-                    caption="Highlighted regions influencing the model",
+                    caption="Highlighted regions influencing the model decision",
                     use_container_width=True
                 )
             else:
-                st.info("Grad-CAM not available for this input.")
+                st.info(
+                    "Grad-CAM visualization is not available for this architecture/input."
+                )
 
 # ======================================================
 # SIDEBAR
@@ -192,11 +198,13 @@ st.sidebar.info("""
 - CNN + BiLSTM + Attention
 - Trained on PatchCamelyon (PCam)
 
-**Important Notes**
+**Key Notes**
 - Patch-level analysis only
 - Output is NOT a diagnosis
-- Use for education & research
+- Designed for education & research
 """)
+
+
 
 
 
