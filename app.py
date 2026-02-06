@@ -13,6 +13,35 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
 
+#helper function
+
+def is_valid_histopathology_image(img: Image.Image) -> bool:
+    """
+    Basic heuristic check to reject non-histopathology images.
+    This is NOT a medical decision, only input suitability validation.
+    """
+    img = img.resize((96, 96))
+    arr = np.array(img)
+
+    # 1. Variance check (reject very flat / uniform images)
+    variance = np.var(arr)
+    if variance < 200:   # empirically safe threshold
+        return False
+
+    # 2. Color distribution check (natural photos often dominate one channel)
+    channel_means = np.mean(arr, axis=(0, 1))
+    max_channel_ratio = np.max(channel_means) / (np.mean(channel_means) + 1e-6)
+    if max_channel_ratio > 1.8:
+        return False
+
+    # 3. Extremely dark or bright images
+    brightness = np.mean(arr)
+    if brightness < 30 or brightness > 225:
+        return False
+
+    return True
+
+
 # ======================================================
 # PAGE CONFIG
 # ======================================================
@@ -86,7 +115,17 @@ with col1:
         st.image(image, use_container_width=True)
 
 with col2:
-    if uploaded_file and st.button("🚀 Analyze Image"):
+   if uploaded_file and st.button("🚀 Analyze Image"):
+
+    # ---------------- IMAGE VALIDATION ----------------
+    if not is_valid_histopathology_image(image):
+        st.error("🚫 This image is not appropriate for histopathology-based breast cancer analysis.")
+        st.info(
+            "Please upload a valid microscopic histopathology image. "
+            "Natural images, selfies, objects, or unrelated scans are not supported."
+        )
+        st.stop()
+
         model = load_model()
         img = image.resize((96,96))
         arr = np.expand_dims(np.array(img)/255.0, axis=0)
@@ -152,3 +191,4 @@ else:
     st.caption("No predictions yet.")
 
 st.sidebar.warning("⚠️ Educational demo only. Not medical advice.")
+
