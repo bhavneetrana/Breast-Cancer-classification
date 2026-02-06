@@ -37,35 +37,40 @@ class Attention(Layer):
         return super(Attention, self).get_config()
 
 # ======================================================
-# 2. IMAGE VALIDATION (The "Wrong Image" Fix)
+# 2. ADVANCED IMAGE VALIDATOR (The "Wrong Image" Fix)
 # ======================================================
-def is_valid_medical_slide(image):
+def validate_input_image(img):
     """
-    Checks if the image is likely a histopathology slide by analyzing 
-    color saturation and texture typical of H&E staining.
+    Analyzes if the image is actually a histopathology slide.
     """
-    img_np = np.array(image.convert("RGB"))
+    # Convert to OpenCV format
+    img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
     
-    # 1. Check for Colorfulness (Slides are usually Pink/Purple/Blue)
-    # Convert to HSV and check saturation
-    hsv = cv2.cvtColor(img_np, cv2.COLOR_RGB2HSV)
-    avg_saturation = np.mean(hsv[:,:,1])
+    # A. Color Check: Most H&E slides are dominated by Pink/Purple/Blue
+    # We check the Hue and Saturation ranges
+    hsv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2HSV)
+    avg_sat = np.mean(hsv[:,:,1])
     
-    # 2. Check for Texture (Laplacian Variance)
-    # Real slides have complex cellular structures. Flat images/noise don't.
-    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    variance = cv2.Laplacian(gray, cv2.CV_64F).var()
+    # B. Texture Check: Real tissue has high entropy (complexity)
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    
+    # C. Sharpness/Edges: Reject pure solid colors or noisy garbage
+    edges = cv2.Canny(gray, 100, 200)
+    edge_density = np.sum(edges > 0) / (gray.shape[0] * gray.shape[1])
 
-    # Heuristic thresholds (Adjustable)
-    if avg_saturation < 20: # Too gray/monochrome
-        return False, "Image lacks the color profile of a stained slide."
-    if variance < 100: # Too blurry or flat
-        return False, "Image lacks the cellular texture required for analysis."
+    # Thresholds for 'Real Histopathology Slides'
+    if avg_sat < 15:
+        return False, "Low color saturation (Image is too gray/monochrome)."
+    if laplacian_var < 80:
+        return False, "Low texture detail (Image is too flat or blurry)."
+    if edge_density < 0.01:
+        return False, "Insufficient structural detail (Doesn't look like tissue cells)."
         
-    return True, "Valid"
+    return True, "Success"
 
 # ======================================================
-# 3. GRAD-CAM (KERAS 3 COMPATIBLE)
+# 3. GRAD-CAM (COMPATIBILITY FIX)
 # ======================================================
 
 def get_gradcam_overlay(img_array, model, original_image):
@@ -77,87 +82,87 @@ def get_gradcam_overlay(img_array, model, original_image):
                 break
         except: continue
     
-    if target_layer is None: return None
+    if not target_layer: return None
 
     grad_model = tf.keras.models.Model([model.inputs], [target_layer.output, model.output])
-
     with tf.GradientTape() as tape:
-        conv_outputs, predictions = grad_model(img_array)
-        loss = predictions[:, 0]
+        conv_outputs, preds = grad_model(img_array)
+        loss = preds[:, 0]
 
     grads = tape.gradient(loss, conv_outputs)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    
     heatmap = conv_outputs[0] @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(heatmap)
-    heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)
-    
-    heatmap_resized = cv2.resize(heatmap.numpy(), (original_image.size[0], original_image.size[1]))
+    heatmap = tf.squeeze(tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)).numpy()
+
+    heatmap_resized = cv2.resize(heatmap, (original_image.size[0], original_image.size[1]))
     heatmap_color = cv2.applyColorMap(np.uint8(255 * heatmap_resized), cv2.COLORMAP_JET)
-    
     return cv2.addWeighted(np.array(original_image), 0.6, heatmap_color, 0.4, 0)
 
 # ======================================================
-# 4. APP UI
+# 4. DASHBOARD UI
 # ======================================================
-st.set_page_config(page_title="OncoVision Pro", layout="wide")
+st.set_page_config(page_title="OncoVision Diagnostic", layout="wide")
 
 st.markdown("""
-    <style>
-    .report-card { padding: 20px; border-radius: 12px; margin-bottom: 20px; color: white; text-align: center; }
-    .malignant { background: linear-gradient(135deg, #ed213a, #93291e); }
-    .benign { background: linear-gradient(135deg, #11998e, #38ef7d); }
-    </style>
+<style>
+    .metric-container { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .alert-box { padding: 20px; border-radius: 10px; color: white; text-align: center; font-weight: bold; }
+    .malig { background: linear-gradient(to right, #cb2d3e, #ef473a); }
+    .benig { background: linear-gradient(to right, #11998e, #38ef7d); }
+</style>
 """, unsafe_allow_html=True)
 
 MODEL_URL = "https://github.com/bhavneetrana/Breast-Cancer-classification/releases/download/v1.0/cnn_bilstm_attention_model.h5"
 MODEL_PATH = "cnn_bilstm_attention_model.h5"
 
 @st.cache_resource
-def load_model():
+def load_app_model():
     if not os.path.exists(MODEL_PATH):
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
     return tf.keras.models.load_model(MODEL_PATH, custom_objects={"Attention": Attention}, compile=False)
 
-st.title("🔬 OncoVision: Medical Image Integrity Analysis")
+st.title("🔬 Clinical Histopathology Analysis")
+st.write("Ensuring image integrity before AI classification.")
 
-col1, col2 = st.columns([1, 1], gap="large")
+col_a, col_b = st.columns(2, gap="large")
 
-with col1:
-    st.subheader("1. Data Input")
-    file = st.file_uploader("Upload histopathology patch", type=["jpg", "png", "jpeg"])
-    if file:
-        img = Image.open(file).convert("RGB")
-        st.image(img, use_container_width=True)
+with col_a:
+    uploaded_file = st.file_uploader("Upload Biopsy Slide Patch", type=["jpg", "png", "jpeg"])
+    if uploaded_file:
+        raw_img = Image.open(uploaded_file).convert("RGB")
+        st.image(raw_img, use_container_width=True, caption="Uploaded Image")
 
-with col2:
-    st.subheader("2. AI Diagnosis")
-    if file and st.button("🚀 Execute Analysis", use_container_width=True):
-        # STEP 1: VALIDATE IMAGE TYPE
-        is_valid, reason = is_valid_medical_slide(img)
+with col_b:
+    if uploaded_file and st.button("🚀 Run AI Analysis", use_container_width=True):
+        # --- VALIDATION STAGE ---
+        valid, message = validate_input_image(raw_img)
         
-        if not is_valid:
-            st.error(f"🛑 **Invalid Image Detected!**")
-            st.warning(f"Reason: {reason}")
-            st.info("Please upload a microscopic biopsy slide (H&E stained). General photos cannot be processed.")
+        if not valid:
+            st.error("🛑 **Analysis Aborted: Invalid Image Type**")
+            st.warning(f"Technical Reason: {message}")
+            st.info("The AI only accepts high-resolution H&E stained biopsy slides. Please do not upload photos of faces, objects, or non-medical images.")
         else:
-            # STEP 2: PROCEED TO PREDICTION
-            model = load_model()
-            arr = np.expand_dims(np.array(img.resize((96, 96))) / 255.0, axis=0)
+            # --- PREDICTION STAGE ---
+            with st.spinner("Processing medical data..."):
+                model = load_app_model()
+                img_prep = raw_img.resize((96, 96))
+                arr = np.expand_dims(np.array(img_prep) / 255.0, axis=0)
+                
+                prediction = model.predict(arr, verbose=0)[0][0]
+                risk = prediction * 100
+                label = "Malignant" if risk > 50 else "Benign"
             
-            prob = model.predict(arr, verbose=0)[0][0]
-            risk = prob * 100
-            label = "Malignant" if risk > 50 else "Benign"
+            # UI Output
+            css_class = "malig" if label == "Malignant" else "benig"
+            st.markdown(f'<div class="alert-box {css_class}"><h2>{label.upper()}</h2><h3>Malignancy Risk: {risk:.2f}%</h3></div>', unsafe_allow_html=True)
             
-            # Display Result
-            cls = "malignant" if label == "Malignant" else "benign"
-            st.markdown(f'<div class="report-card {cls}"><h2>{label.upper()}</h2><h3>Risk: {risk:.2f}%</h3></div>', unsafe_allow_html=True)
+            # Explainability
             
-            # Grad-CAM
-            overlay = get_gradcam_overlay(arr, model, img)
+            st.subheader("Structural Focus (Grad-CAM)")
+            overlay = get_gradcam_overlay(arr, model, raw_img)
             if overlay is not None:
-                st.write("### AI Feature Mapping")
-                st.image(overlay, use_container_width=True)
+                st.image(overlay, use_container_width=True, caption="Heatmap highlighting diagnostic areas")
+
 
 
 
