@@ -1,117 +1,93 @@
 import streamlit as st
 import tensorflow as tf
 import numpy as np
-import pandas as pd
-from PIL import Image
-import tensorflow.keras.backend as K
-from tensorflow.keras.layers import Layer, Conv2D
+import cv2
 import os
 import urllib.request
+from PIL import Image
 from datetime import datetime
-from io import BytesIO
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-import cv2
 
 # ======================================================
-# 1. CUSTOM ATTENTION LAYER
+# 1. MODEL UTILITIES & ATTENTION
 # ======================================================
 @tf.keras.utils.register_keras_serializable(package="Custom")
-class Attention(Layer):
+class Attention(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
         super(Attention, self).__init__(**kwargs)
-
     def build(self, input_shape):
-        self.W = self.add_weight(name="att_weight", shape=(input_shape[-1], 1),
-                                 initializer="glorot_uniform", trainable=True)
-        self.b = self.add_weight(name="att_bias", shape=(input_shape[1], 1),
-                                 initializer="zeros", trainable=True)
+        self.W = self.add_weight(name="att_weight", shape=(input_shape[-1], 1), initializer="glorot_uniform", trainable=True)
+        self.b = self.add_weight(name="att_bias", shape=(input_shape[1], 1), initializer="zeros", trainable=True)
         super(Attention, self).build(input_shape)
-
     def call(self, x):
-        e = K.tanh(K.dot(x, self.W) + self.b)
-        a = K.softmax(e, axis=1)
-        return K.sum(x * a, axis=1)
-
+        e = tf.keras.backend.tanh(tf.keras.backend.dot(x, self.W) + self.b)
+        a = tf.keras.backend.softmax(e, axis=1)
+        return tf.keras.backend.sum(x * a, axis=1)
     def get_config(self):
         return super(Attention, self).get_config()
 
 # ======================================================
-# 2. ADVANCED IMAGE VALIDATOR (The "Wrong Image" Fix)
+# 2. THE GATEKEEPER: MEDICAL IMAGE VALIDATION
 # ======================================================
-def validate_input_image(img):
-    """
-    Analyzes if the image is actually a histopathology slide.
-    """
-    # Convert to OpenCV format
-    img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+def is_valid_biopsy(image):
+    """Checks if the image matches the profile of a stained medical slide."""
+    img_np = np.array(image.convert("RGB"))
     
-    # A. Color Check: Most H&E slides are dominated by Pink/Purple/Blue
-    # We check the Hue and Saturation ranges
-    hsv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2HSV)
-    avg_sat = np.mean(hsv[:,:,1])
-    
-    # B. Texture Check: Real tissue has high entropy (complexity)
-    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    # A. Texture Analysis (Tissue is complex, objects/noise are not)
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
     laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
     
-    # C. Sharpness/Edges: Reject pure solid colors or noisy garbage
-    edges = cv2.Canny(gray, 100, 200)
-    edge_density = np.sum(edges > 0) / (gray.shape[0] * gray.shape[1])
-
-    # Thresholds for 'Real Histopathology Slides'
-    if avg_sat < 15:
-        return False, "Low color saturation (Image is too gray/monochrome)."
-    if laplacian_var < 80:
-        return False, "Low texture detail (Image is too flat or blurry)."
-    if edge_density < 0.01:
-        return False, "Insufficient structural detail (Doesn't look like tissue cells)."
+    # B. Color Profile (H&E Stains are specific to Pink/Purple)
+    hsv = cv2.cvtColor(img_np, cv2.COLOR_RGB2HSV)
+    avg_sat = np.mean(hsv[:,:,1])
+    
+    # Logic: Real histopathology has high texture and specific saturation
+    if laplacian_var < 100: # Rejects flat colors, gradients, or blurry photos
+        return False, "Insufficient cellular texture detected."
+    if avg_sat < 25: # Rejects gray/dull non-medical photos
+        return False, "Color profile does not match H&E staining."
         
     return True, "Success"
 
 # ======================================================
-# 3. GRAD-CAM (COMPATIBILITY FIX)
+# 3. INTERPRETABILITY (GRAD-CAM)
 # ======================================================
 
-def get_gradcam_overlay(img_array, model, original_image):
-    target_layer = None
-    for layer in reversed(model.layers):
-        try:
-            if len(layer.output.shape) == 4:
-                target_layer = layer
-                break
-        except: continue
-    
+def get_gradcam(img_array, model, original_image):
+    target_layer = next((l for l in reversed(model.layers) if len(l.output.shape) == 4), None)
     if not target_layer: return None
 
     grad_model = tf.keras.models.Model([model.inputs], [target_layer.output, model.output])
     with tf.GradientTape() as tape:
-        conv_outputs, preds = grad_model(img_array)
+        conv_outs, preds = grad_model(img_array)
         loss = preds[:, 0]
-
-    grads = tape.gradient(loss, conv_outputs)
+    
+    grads = tape.gradient(loss, conv_outs)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    heatmap = conv_outputs[0] @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)).numpy()
-
-    heatmap_resized = cv2.resize(heatmap, (original_image.size[0], original_image.size[1]))
-    heatmap_color = cv2.applyColorMap(np.uint8(255 * heatmap_resized), cv2.COLORMAP_JET)
-    return cv2.addWeighted(np.array(original_image), 0.6, heatmap_color, 0.4, 0)
+    heatmap = tf.reduce_sum(tf.multiply(pooled_grads, conv_outs[0]), axis=-1)
+    heatmap = np.maximum(heatmap, 0) / (np.max(heatmap) + 1e-8)
+    
+    heatmap = cv2.resize(heatmap, (original_image.size[0], original_image.size[1]))
+    heatmap = cv2.applyColorMap(np.uint8(255 * heatmap), cv2.COLORMAP_JET)
+    return cv2.addWeighted(np.array(original_image), 0.6, heatmap, 0.4, 0)
 
 # ======================================================
-# 4. DASHBOARD UI
+# 4. MODERN UI CONFIGURATION
 # ======================================================
-st.set_page_config(page_title="OncoVision Diagnostic", layout="wide")
+st.set_page_config(page_title="OncoVision AI", layout="wide", page_icon="🔬")
 
+# Professional CSS Injection
 st.markdown("""
 <style>
-    .metric-container { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .alert-box { padding: 20px; border-radius: 10px; color: white; text-align: center; font-weight: bold; }
-    .malig { background: linear-gradient(to right, #cb2d3e, #ef473a); }
-    .benig { background: linear-gradient(to right, #11998e, #38ef7d); }
+    [data-testid="stSidebar"] { background-color: #f8f9fa; border-right: 1px solid #e0e0e0; }
+    .main { background-color: #ffffff; }
+    .diag-card { padding: 2rem; border-radius: 1rem; color: white; margin-bottom: 2rem; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+    .malig { background: linear-gradient(135deg, #e53935, #b71c1c); border-left: 8px solid #7f0000; }
+    .benig { background: linear-gradient(135deg, #43a047, #1b5e20); border-left: 8px solid #003300; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
+# Model Loading
 MODEL_URL = "https://github.com/bhavneetrana/Breast-Cancer-classification/releases/download/v1.0/cnn_bilstm_attention_model.h5"
 MODEL_PATH = "cnn_bilstm_attention_model.h5"
 
@@ -121,47 +97,62 @@ def load_app_model():
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
     return tf.keras.models.load_model(MODEL_PATH, custom_objects={"Attention": Attention}, compile=False)
 
-st.title("🔬 Clinical Histopathology Analysis")
-st.write("Ensuring image integrity before AI classification.")
+# ======================================================
+# 5. MAIN EXECUTION FLOW
+# ======================================================
+st.sidebar.title("🧬 Control Panel")
+st.sidebar.info("Upload a microscopic slide patch (96x96 px recommended) for AI analysis.")
 
-col_a, col_b = st.columns(2, gap="large")
+uploaded_file = st.sidebar.file_uploader("Choose Tissue Image", type=["jpg", "png", "jpeg"])
 
-with col_a:
-    uploaded_file = st.file_uploader("Upload Biopsy Slide Patch", type=["jpg", "png", "jpeg"])
-    if uploaded_file:
-        raw_img = Image.open(uploaded_file).convert("RGB")
-        st.image(raw_img, use_container_width=True, caption="Uploaded Image")
-
-with col_b:
-    if uploaded_file and st.button("🚀 Run AI Analysis", use_container_width=True):
-        # --- VALIDATION STAGE ---
-        valid, message = validate_input_image(raw_img)
+if uploaded_file:
+    img = Image.open(uploaded_file).convert("RGB")
+    
+    col1, col2 = st.columns([1, 1], gap="large")
+    
+    with col1:
+        st.subheader("Input Visualization")
+        st.image(img, use_container_width=True, caption="Microscopic Sample")
         
-        if not valid:
-            st.error("🛑 **Analysis Aborted: Invalid Image Type**")
-            st.warning(f"Technical Reason: {message}")
-            st.info("The AI only accepts high-resolution H&E stained biopsy slides. Please do not upload photos of faces, objects, or non-medical images.")
-        else:
-            # --- PREDICTION STAGE ---
-            with st.spinner("Processing medical data..."):
+    with col2:
+        st.subheader("Diagnostic Engine")
+        if st.button("🚀 Analyze Biopsy"):
+            # Stage 1: Security Check
+            is_valid, reason = is_valid_biopsy(img)
+            
+            if not is_valid:
+                st.error("🛑 **Access Denied: Non-Medical Data**")
+                st.warning(f"Reason: {reason}")
+                st.info("The AI system is calibrated only for stained histopathology. Standard photos cannot be analyzed.")
+            else:
+                # Stage 2: Inference
                 model = load_app_model()
-                img_prep = raw_img.resize((96, 96))
-                arr = np.expand_dims(np.array(img_prep) / 255.0, axis=0)
+                prep = np.expand_dims(np.array(img.resize((96, 96))) / 255.0, axis=0)
                 
-                prediction = model.predict(arr, verbose=0)[0][0]
-                risk = prediction * 100
-                label = "Malignant" if risk > 50 else "Benign"
-            
-            # UI Output
-            css_class = "malig" if label == "Malignant" else "benig"
-            st.markdown(f'<div class="alert-box {css_class}"><h2>{label.upper()}</h2><h3>Malignancy Risk: {risk:.2f}%</h3></div>', unsafe_allow_html=True)
-            
-            # Explainability
-            
-            st.subheader("Structural Focus (Grad-CAM)")
-            overlay = get_gradcam_overlay(arr, model, raw_img)
-            if overlay is not None:
-                st.image(overlay, use_container_width=True, caption="Heatmap highlighting diagnostic areas")
+                score = model.predict(prep, verbose=0)[0][0]
+                label = "Malignant" if score > 0.5 else "Benign"
+                color_class = "malig" if label == "Malignant" else "benig"
+                
+                # Professional Result Card
+                st.markdown(f"""
+                    <div class="diag-card {color_class}">
+                        <h1 style='margin:0;'>{label.upper()}</h1>
+                        <p style='font-size:1.2rem; opacity:0.9;'>Malignancy Confidence: {score*100:.2f}%</p>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # Explainability
+                
+                st.write("### AI Interpretability (Grad-CAM)")
+                overlay = get_gradcam(prep, model, img)
+                if overlay is not None:
+                    st.image(overlay, use_container_width=True, caption="Heatmap: Regions influencing the diagnosis")
+
+else:
+    st.title("🔬 OncoVision Clinical Dashboard")
+    st.write("Welcome. Please upload a biopsy patch in the sidebar to begin automated screening.")
+    st.image("https://img.freepik.com/free-vector/medical-science-banner-with-dna-structure_1017-23190.jpg", use_container_width=True)
+
 
 
 
