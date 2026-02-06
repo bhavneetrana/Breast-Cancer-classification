@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 import tensorflow.keras.backend as K
-from tensorflow.keras.layers import Layer, Conv2D, InputLayer
+from tensorflow.keras.layers import Layer, Conv2D, BatchNormalization
 import os
 import urllib.request
 from datetime import datetime
@@ -14,7 +14,7 @@ from reportlab.pdfgen import canvas
 import cv2
 
 # ======================================================
-# 1. CUSTOM ATTENTION LAYER
+# 1. CUSTOM ATTENTION LAYER (SERIALIZABLE)
 # ======================================================
 @tf.keras.utils.register_keras_serializable(package="Custom")
 class Attention(Layer):
@@ -37,65 +37,67 @@ class Attention(Layer):
         return super(Attention, self).get_config()
 
 # ======================================================
-# 2. UPDATED GRAD-CAM FUNCTION (The Fix)
+# 2. ROBUST GRAD-CAM FOR HYBRID ARCHITECTURES
 # ======================================================
 def get_gradcam_overlay(img_array, model, original_image):
-    # Search for the last layer that has 4D output (Height, Width, Channels)
-    # This is more reliable than searching by class type alone
-    last_conv_layer_name = None
+    """
+    Finds the last 4D convolutional layer and computes the Grad-CAM heatmap.
+    """
+    # Identify the last layer with spatial dimensions (4D: Batch, H, W, C)
+    target_layer = None
     for layer in reversed(model.layers):
         if len(layer.output_shape) == 4:
-            last_conv_layer_name = layer.name
+            target_layer = layer
             break
     
-    if not last_conv_layer_name:
-        # Fallback: if no 4D layer found, we can't do Grad-CAM
-        return np.array(original_image)
+    if target_layer is None:
+        return None
 
-    # Build the Grad-CAM model
+    # Create a sub-model mapping input to the target layer and final prediction
     grad_model = tf.keras.models.Model(
         inputs=[model.inputs],
-        outputs=[model.get_layer(last_conv_layer_name).output, model.output]
+        outputs=[target_layer.output, model.output]
     )
 
     with tf.GradientTape() as tape:
-        last_conv_layer_output, preds = grad_model(img_array)
-        # We target the specific prediction score
-        class_channel = preds[:, 0]
+        conv_outputs, predictions = grad_model(img_array)
+        # Target the prediction score (Sigmoid output)
+        loss = predictions[:, 0]
 
-    # Calculate gradients
-    grads = tape.gradient(class_channel, last_conv_layer_output)
+    # Calculate gradients of the loss w.r.t the feature map
+    grads = tape.gradient(loss, conv_outputs)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
     
-    # Weight the channels by the gradient importance
-    last_conv_layer_output = last_conv_layer_output[0]
-    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
+    # Weight the spatial feature map by the gradient importance
+    conv_outputs = conv_outputs[0]
+    heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
-    
-    # Normalize heatmap
+
+    # Apply ReLU and Normalize
     heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)
     heatmap = heatmap.numpy()
 
-    # Overlay logic
-    heatmap_img = cv2.resize(heatmap, (original_image.size[0], original_image.size[1]))
-    heatmap_img = np.uint8(255 * heatmap_img)
-    heatmap_color = cv2.applyColorMap(heatmap_img, cv2.COLORMAP_JET)
+    # Overlay on original image
+    heatmap_resized = cv2.resize(heatmap, (original_image.size[0], original_image.size[1]))
+    heatmap_resized = np.uint8(255 * heatmap_resized)
+    heatmap_color = cv2.applyColorMap(heatmap_resized, cv2.COLORMAP_JET)
     
     img_np = np.array(original_image)
     overlay = cv2.addWeighted(img_np, 0.6, heatmap_color, 0.4, 0)
     return overlay
 
 # ======================================================
-# 3. APP LOGIC & UI
+# 3. STREAMLIT UI & LOGIC
 # ======================================================
-st.set_page_config(page_title="OncoVision", layout="wide")
+st.set_page_config(page_title="OncoVision AI", page_icon="🔬", layout="wide")
 
-# UI Styling
+# Styling
 st.markdown("""
     <style>
-    .report-card { background-color: white; padding: 20px; border-radius: 15px; border-left: 10px solid #007bff; }
-    .malignant-text { color: #d9534f; font-weight: bold; }
-    .benign-text { color: #5cb85c; font-weight: bold; }
+    .stMetric { background-color: #ffffff; padding: 10px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .result-card { padding: 20px; border-radius: 15px; text-align: center; color: white; margin-bottom: 20px; font-weight: bold; }
+    .malignant-bg { background: linear-gradient(135deg, #e53935, #b71c1c); }
+    .benign-bg { background: linear-gradient(135deg, #43a047, #1b5e20); }
     </style>
 """, unsafe_allow_html=True)
 
@@ -108,51 +110,76 @@ def load_app_model():
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
     return tf.keras.models.load_model(MODEL_PATH, custom_objects={"Attention": Attention}, compile=False)
 
-st.title("🔬 Breast Cancer AI Analysis")
+# Main Interface
+st.title("🔬 OncoVision: Breast Cancer Diagnostic AI")
+st.write("Hybrid CNN-BiLSTM-Attention Model for Histopathology Analysis")
 
-col1, col2 = st.columns([1, 1])
+tab_analysis, tab_history = st.tabs(["🔍 Analysis Workspace", "📜 History Log"])
 
-with col1:
-    uploaded_file = st.file_uploader("Upload biopsy image", type=["jpg", "png", "jpeg"])
-    if uploaded_file:
-        image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, caption="Original Sample", use_container_width=True)
+if 'history' not in st.session_state:
+    st.session_state.history = []
 
-with col2:
-    if uploaded_file and st.button("🚀 Run Analysis"):
-        model = load_app_model()
-        
-        # Image processing
-        img_prep = image.resize((96, 96))
-        arr = np.expand_dims(np.array(img_prep) / 255.0, axis=0)
-        
-        # Prediction
-        preds = model.predict(arr, verbose=0)
-        risk = float(preds[0][0] * 100)
-        label = "Malignant" if risk > 50 else "Benign"
-        
-        # Results Display
-        st.markdown(f"""
-            <div class="report-card">
-                <h3>Result: <span class="{label.lower()}-text">{label}</span></h3>
-                <p>Confidence Level: <b>{risk:.2f}%</b></p>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Grad-CAM Visualization
-        
-        st.subheader("Visual Explanation (Grad-CAM)")
-        try:
+with tab_analysis:
+    col_upload, col_result = st.columns([1, 1], gap="large")
+    
+    with col_upload:
+        st.subheader("Upload Tissue Patch")
+        uploaded_file = st.file_uploader("Upload Image (JPG/PNG)", type=["jpg", "png", "jpeg"])
+        if uploaded_file:
+            image = Image.open(uploaded_file).convert("RGB")
+            st.image(image, caption="Biopsy Slide Patch", use_container_width=True)
+
+    with col_result:
+        st.subheader("AI Diagnostics")
+        if uploaded_file and st.button("🚀 Analyze Sample", use_container_width=True):
+            model = load_app_model()
+            
+            # Preprocessing
+            img_resized = image.resize((96, 96))
+            arr = np.expand_dims(np.array(img_resized) / 255.0, axis=0)
+            
+            # Inference
+            prediction = model.predict(arr, verbose=0)[0][0]
+            risk = float(prediction * 100)
+            label = "Malignant" if risk > 50 else "Benign"
+            
+            # UI Feedback
+            bg_class = "malignant-bg" if label == "Malignant" else "benign-bg"
+            st.markdown(f'<div class="result-card {bg_class}"><h2>{label.upper()}</h2><p>Risk Score: {risk:.2f}%</p></div>', unsafe_allow_html=True)
+            
+            # Grad-CAM Visualization
+            
+            st.write("### AI Focus Map (Grad-CAM)")
             overlay = get_gradcam_overlay(arr, model, image)
-            st.image(overlay, caption="Heatmap highlighting high-risk regions", use_container_width=True)
-        except Exception as e:
-            st.warning("Visual heatmap generation skipped for this specific model architecture.")
+            
+            if overlay is not None:
+                st.image(overlay, caption="Heatmap highlighting high-risk cellular clusters", use_container_width=True)
+            else:
+                st.warning("Spatial layers not detected for Grad-CAM generation.")
+            
+            # History Tracking
+            st.session_state.history.append({
+                "Timestamp": datetime.now().strftime("%H:%M:%S"),
+                "Diagnosis": label,
+                "Confidence": f"{risk:.1f}%"
+            })
 
-        # History
-        if 'log' not in st.session_state: st.session_state.log = []
-        st.session_state.log.append({"Time": datetime.now().strftime("%H:%M"), "Result": label, "Risk": f"{risk:.1f}%"})
+            # Report Download
+            buffer = BytesIO()
+            p = canvas.Canvas(buffer, pagesize=A4)
+            p.drawString(100, 800, f"OncoVision AI Report - {label}")
+            p.drawString(100, 780, f"Date: {datetime.now().strftime('%Y-%m-%d')}")
+            p.drawString(100, 760, f"Malignancy Risk: {risk:.2f}%")
+            p.save()
+            st.download_button("📥 Download Report", buffer.getvalue(), "diagnostic_report.pdf", "application/pdf")
 
-if 'log' in st.session_state and st.session_state.log:
-    with st.expander("View Analysis History"):
-        st.table(pd.DataFrame(st.session_state.log))
+with tab_history:
+    if st.session_state.history:
+        st.dataframe(pd.DataFrame(st.session_state.history), use_container_width=True)
+        if st.button("Clear Session History"):
+            st.session_state.history = []
+            st.rerun()
+    else:
+        st.info("No analyses performed in this session.")
+
 
