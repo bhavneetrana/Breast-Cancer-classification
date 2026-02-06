@@ -7,7 +7,7 @@ import urllib.request
 from PIL import Image
 
 # ======================================================
-# 1. CORE ENGINE (CNN + Bi-LSTM + Attention)
+# 1. CORE AI ENGINE
 # ======================================================
 @tf.keras.utils.register_keras_serializable(package="Custom")
 class Attention(tf.keras.layers.Layer):
@@ -25,31 +25,24 @@ class Attention(tf.keras.layers.Layer):
         return super(Attention, self).get_config()
 
 def get_gradcam(img_array, model, original_image):
-    target_layer = None
-    for layer in reversed(model.layers):
-        if len(layer.output.shape) == 4:
-            target_layer = layer
-            break
+    target_layer = next((l for l in reversed(model.layers) if len(l.output.shape) == 4), None)
     if not target_layer: return None
-
     grad_model = tf.keras.models.Model([model.inputs], [target_layer.output, model.output])
     with tf.GradientTape() as tape:
         conv_outs, preds = grad_model(img_array)
         loss = preds[:, 0]
-    
     grads = tape.gradient(loss, conv_outs)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
     heatmap = conv_outs[0] @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8))
-    
-    heatmap_np = cv2.resize(heatmap.numpy(), (original_image.size[0], original_image.size[1]))
-    heatmap_color = cv2.applyColorMap(np.uint8(255 * heatmap_np), cv2.COLORMAP_JET)
-    return cv2.addWeighted(np.array(original_image), 0.6, heatmap_color, 0.4, 0)
+    heatmap = tf.squeeze(tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)).numpy()
+    heatmap = cv2.resize(heatmap, (original_image.size[0], original_image.size[1]))
+    heatmap = cv2.applyColorMap(np.uint8(255 * heatmap), cv2.COLORMAP_JET)
+    return cv2.addWeighted(np.array(original_image), 0.6, heatmap, 0.4, 0)
 
 # ======================================================
-# 2. SIMPLE UI LAYOUT
+# 2. UI CONFIGURATION
 # ======================================================
-st.set_page_config(page_title="OncoVision AI", layout="centered")
+st.set_page_config(page_title="OncoVision AI", layout="wide")
 
 MODEL_URL = "https://github.com/bhavneetrana/Breast-Cancer-classification/releases/download/v1.0/cnn_bilstm_attention_model.h5"
 MODEL_PATH = "cnn_bilstm_attention_model.h5"
@@ -60,55 +53,62 @@ def load_model():
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
     return tf.keras.models.load_model(MODEL_PATH, custom_objects={"Attention": Attention}, compile=False)
 
-st.title("Breast Cancer Classification System")
-st.text("Clinical Decision Support Tool - Version 1.0")
-st.divider()
+# Header
+st.title("🔬 Clinical Breast Cancer Classifier")
+st.caption("Hybrid CNN-BiLSTM-Attention Architecture for Histopathology Analysis")
 
-# Input Section
-uploaded_file = st.file_uploader("Upload Histopathology Image (JPG/PNG)", type=["jpg", "png", "jpeg"])
+# Main Layout
+col_left, col_right = st.columns([1, 1], gap="large")
 
-if uploaded_file:
-    img = Image.open(uploaded_file).convert("RGB")
-    
-    # Simple side-by-side display
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(img, caption="Patient Sample", use_container_width=True)
-    
-    with col2:
-        if st.button("Start AI Prediction"):
-            model = load_model()
-            
-            # Basic Image Prep
-            prep = np.expand_dims(np.array(img.resize((96, 96))) / 255.0, axis=0)
-            
-            # Predict
-            score = model.predict(prep, verbose=0)[0][0]
-            label = "MALIGNANT" if score > 0.5 else "BENIGN"
-            
-            # Standard Medical Output
-            st.subheader(f"Result: {label}")
-            st.write(f"Confidence Score: {score*100:.2f}%")
-            
-            # Soft Validation Warning
-            hsv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2HSV)
-            if np.mean(hsv[:,:,1]) < 25:
-                st.warning("Notice: Image color profile deviates from standard H&E staining.")
+with col_left:
+    st.subheader("Data Upload")
+    uploaded_file = st.file_uploader("Upload a biopsy slide patch (JPG/PNG)", type=["jpg", "png", "jpeg"])
+    if uploaded_file:
+        img = Image.open(uploaded_file).convert("RGB")
+        st.image(img, caption="Input Sample", use_container_width=True)
 
-            st.divider()
-            
-            # Grad-CAM Display
-            overlay = get_gradcam(prep, model, img)
-            if overlay is not None:
-                st.image(overlay, caption="Grad-CAM Visualization", use_container_width=True)
+with col_right:
+    st.subheader("Diagnostic Output")
+    if uploaded_file:
+        if st.button("🚀 Run Analysis", use_container_width=True):
+            with st.spinner("Processing neural layers..."):
+                model = load_model()
+                prep = np.expand_dims(np.array(img.resize((96, 96))) / 255.0, axis=0)
                 
+                # Inference
+                score = float(model.predict(prep, verbose=0)[0][0])
+                label = "Malignant" if score > 0.5 else "Benign"
+                
+                # 1. Interactive Metrics
+                m1, m2 = st.columns(2)
+                m1.metric("Classification", label, delta="Warning" if label == "Malignant" else "Normal", delta_color="inverse")
+                m2.metric("Probability", f"{score*100:.1f}%")
 
-else:
-    st.write("Please upload a tissue patch to begin analysis.")
+                # 2. Visual Probability Bar
+                st.write("**Confidence Level Indicator:**")
+                st.progress(score)
+                st.caption(f"0% (Benign) {' ' * 40} 50% (Threshold) {' ' * 40} 100% (Malignant)")
 
-st.sidebar.markdown("### System Info")
-st.sidebar.text("Architecture: CNN-BiLSTM")
-st.sidebar.text("Layer: Global Attention")
+                # 3. Smart Validation Warning (Non-blocking)
+                hsv_sat = np.mean(cv2.cvtColor(np.array(img), cv2.COLOR_RGB2HSV)[:,:,1])
+                if hsv_sat < 20:
+                    st.warning("⚠️ Image metadata suggests this may not be a standard H&E stained slide.")
+
+                # 4. Technical Expanders
+                with st.expander("🔍 View AI Interpretability (Grad-CAM)"):
+                    overlay = get_gradcam(prep, model, img)
+                    if overlay is not None:
+                        st.image(overlay, use_container_width=True, caption="Heatmap highlighting high-risk cellular regions")
+                        
+                    
+                with st.expander("🛠 Architecture Details"):
+                    st.write("Current analysis uses a CNN backbone for spatial features, Bi-LSTM for sequence context, and a Global Attention mechanism to weigh diagnostic pixels.")
+    else:
+        st.info("Awaiting input file to begin diagnostic sequence.")
+
+st.divider()
+st.caption("Confidentiality Notice: This tool is for research support only. Final diagnosis must be confirmed by a board-certified pathologist.")
+
 
 
 
