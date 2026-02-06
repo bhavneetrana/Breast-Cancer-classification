@@ -4,18 +4,17 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 import tensorflow.keras.backend as K
-from tensorflow.keras.layers import Layer, Conv2D
+from tensorflow.keras.layers import Layer, Conv2D, InputLayer
 import os
 import urllib.request
 from datetime import datetime
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from reportlab.lib.units import cm
 import cv2
 
 # ======================================================
-# 1. CUSTOM ATTENTION LAYER (Fixed for Loading)
+# 1. CUSTOM ATTENTION LAYER
 # ======================================================
 @tf.keras.utils.register_keras_serializable(package="Custom")
 class Attention(Layer):
@@ -23,7 +22,6 @@ class Attention(Layer):
         super(Attention, self).__init__(**kwargs)
 
     def build(self, input_shape):
-        # input_shape[-1] is the feature dimension
         self.W = self.add_weight(name="att_weight", shape=(input_shape[-1], 1),
                                  initializer="glorot_uniform", trainable=True)
         self.b = self.add_weight(name="att_bias", shape=(input_shape[1], 1),
@@ -33,141 +31,128 @@ class Attention(Layer):
     def call(self, x):
         e = K.tanh(K.dot(x, self.W) + self.b)
         a = K.softmax(e, axis=1)
-        output = K.sum(x * a, axis=1)
-        return output
+        return K.sum(x * a, axis=1)
 
     def get_config(self):
         return super(Attention, self).get_config()
 
 # ======================================================
-# 2. PAGE CONFIG & UI STYLING
+# 2. UPDATED GRAD-CAM FUNCTION (The Fix)
 # ======================================================
-st.set_page_config(page_title="OncoVision AI", page_icon="🔬", layout="wide")
-
-st.markdown("""
-    <style>
-    .main { background-color: #f0f2f6; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
-    .status-card { padding: 20px; border-radius: 10px; text-align: center; color: white; margin-bottom: 20px; }
-    .malignant { background: linear-gradient(135deg, #ff4b2b, #ff416c); }
-    .benign { background: linear-gradient(135deg, #56ab2f, #a8e063); }
-    </style>
-""", unsafe_allow_html=True)
-
-# ======================================================
-# 3. CORE LOGIC (MODEL & GRAD-CAM)
-# ======================================================
-MODEL_URL = "https://github.com/bhavneetrana/Breast-Cancer-classification/releases/download/v1.0/cnn_bilstm_attention_model.h5"
-MODEL_PATH = "cnn_bilstm_attention_model.h5"
-
-@st.cache_resource
-def load_model_instance():
-    if not os.path.exists(MODEL_PATH):
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-    return tf.keras.models.load_model(
-        MODEL_PATH, 
-        custom_objects={"Attention": Attention}, 
-        compile=False
-    )
-
 def get_gradcam_overlay(img_array, model, original_image):
-    # Find last conv layer
+    # Search for the last layer that has 4D output (Height, Width, Channels)
+    # This is more reliable than searching by class type alone
     last_conv_layer_name = None
     for layer in reversed(model.layers):
-        if isinstance(layer, Conv2D):
+        if len(layer.output_shape) == 4:
             last_conv_layer_name = layer.name
             break
     
-    # Create sub-model for Grad-CAM
+    if not last_conv_layer_name:
+        # Fallback: if no 4D layer found, we can't do Grad-CAM
+        return np.array(original_image)
+
+    # Build the Grad-CAM model
     grad_model = tf.keras.models.Model(
         inputs=[model.inputs],
         outputs=[model.get_layer(last_conv_layer_name).output, model.output]
     )
 
     with tf.GradientTape() as tape:
-        conv_outputs, predictions = grad_model(img_array)
-        loss = predictions[:, 0]
+        last_conv_layer_output, preds = grad_model(img_array)
+        # We target the specific prediction score
+        class_channel = preds[:, 0]
 
-    grads = tape.gradient(loss, conv_outputs)
+    # Calculate gradients
+    grads = tape.gradient(class_channel, last_conv_layer_output)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
     
-    heatmap = conv_outputs[0] @ pooled_grads[..., tf.newaxis]
+    # Weight the channels by the gradient importance
+    last_conv_layer_output = last_conv_layer_output[0]
+    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
+    
+    # Normalize heatmap
     heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)
     heatmap = heatmap.numpy()
 
-    # Resize and Overlay
-    heatmap_resized = cv2.resize(heatmap, (original_image.size[0], original_image.size[1]))
-    heatmap_resized = np.uint8(255 * heatmap_resized)
-    heatmap_color = cv2.applyColorMap(heatmap_resized, cv2.COLORMAP_JET)
+    # Overlay logic
+    heatmap_img = cv2.resize(heatmap, (original_image.size[0], original_image.size[1]))
+    heatmap_img = np.uint8(255 * heatmap_img)
+    heatmap_color = cv2.applyColorMap(heatmap_img, cv2.COLORMAP_JET)
     
     img_np = np.array(original_image)
     overlay = cv2.addWeighted(img_np, 0.6, heatmap_color, 0.4, 0)
     return overlay
 
 # ======================================================
-# 4. DASHBOARD UI
+# 3. APP LOGIC & UI
 # ======================================================
-st.title("🔬 OncoVision: Breast Cancer Diagnostic AI")
-st.write("Professional-grade histopathology analysis using Deep Learning.")
+st.set_page_config(page_title="OncoVision", layout="wide")
 
-tab1, tab2 = st.tabs(["Analysis Workspace", "Analysis History"])
+# UI Styling
+st.markdown("""
+    <style>
+    .report-card { background-color: white; padding: 20px; border-radius: 15px; border-left: 10px solid #007bff; }
+    .malignant-text { color: #d9534f; font-weight: bold; }
+    .benign-text { color: #5cb85c; font-weight: bold; }
+    </style>
+""", unsafe_allow_html=True)
 
-if 'history' not in st.session_state:
-    st.session_state.history = []
+MODEL_URL = "https://github.com/bhavneetrana/Breast-Cancer-classification/releases/download/v1.0/cnn_bilstm_attention_model.h5"
+MODEL_PATH = "cnn_bilstm_attention_model.h5"
 
-with tab1:
-    col1, col2 = st.columns([1, 1], gap="large")
-    
-    with col1:
-        st.subheader("Upload Slide")
-        uploaded_file = st.file_uploader("Upload a histopathology patch (JPG/PNG)", type=["jpg", "png", "jpeg"])
-        if uploaded_file:
-            image = Image.open(uploaded_file).convert("RGB")
-            st.image(image, caption="Uploaded Tissue Sample", use_container_width=True)
+@st.cache_resource
+def load_app_model():
+    if not os.path.exists(MODEL_PATH):
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+    return tf.keras.models.load_model(MODEL_PATH, custom_objects={"Attention": Attention}, compile=False)
 
-    with col2:
-        st.subheader("AI Prediction")
-        if uploaded_file and st.button("Analyze Sample"):
-            model = load_model_instance()
-            
-            # Prep Image
-            img_resized = image.resize((96, 96))
-            img_arr = np.expand_dims(np.array(img_resized) / 255.0, axis=0)
-            
-            # Predict
-            prediction = model.predict(img_arr, verbose=0)[0][0]
-            risk_score = float(prediction * 100)
-            label = "Malignant" if risk_score > 50 else "Benign"
-            
-            # UI Feedback
-            style_class = "malignant" if label == "Malignant" else "benign"
-            st.markdown(f"""
-                <div class="status-card {style_class}">
-                    <h2 style="color:white;">{label.upper()}</h2>
-                    <p style="font-size:1.2em; color:white;">Confidence: {risk_score:.2f}%</p>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # Grad-CAM
-            st.write("### Interpretability (Grad-CAM)")
-            
-            overlay_img = get_gradcam_overlay(img_arr, model, image)
-            st.image(overlay_img, caption="Red areas indicate high-risk features identified by AI", use_container_width=True)
-            
-            # Add to history
-            st.session_state.history.append({
-                "Time": datetime.now().strftime("%H:%M:%S"),
-                "Diagnosis": label,
-                "Risk %": round(risk_score, 2)
-            })
+st.title("🔬 Breast Cancer AI Analysis")
 
-with tab2:
-    st.subheader("Session Log")
-    if st.session_state.history:
-        st.table(pd.DataFrame(st.session_state.history))
-    else:
-        st.write("No analyses performed in this session.")
+col1, col2 = st.columns([1, 1])
 
-st.sidebar.markdown("---")
-st.sidebar.caption("Educational Tool - Not for Clinical Diagnosis.")
+with col1:
+    uploaded_file = st.file_uploader("Upload biopsy image", type=["jpg", "png", "jpeg"])
+    if uploaded_file:
+        image = Image.open(uploaded_file).convert("RGB")
+        st.image(image, caption="Original Sample", use_container_width=True)
+
+with col2:
+    if uploaded_file and st.button("🚀 Run Analysis"):
+        model = load_app_model()
+        
+        # Image processing
+        img_prep = image.resize((96, 96))
+        arr = np.expand_dims(np.array(img_prep) / 255.0, axis=0)
+        
+        # Prediction
+        preds = model.predict(arr, verbose=0)
+        risk = float(preds[0][0] * 100)
+        label = "Malignant" if risk > 50 else "Benign"
+        
+        # Results Display
+        st.markdown(f"""
+            <div class="report-card">
+                <h3>Result: <span class="{label.lower()}-text">{label}</span></h3>
+                <p>Confidence Level: <b>{risk:.2f}%</b></p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Grad-CAM Visualization
+        
+        st.subheader("Visual Explanation (Grad-CAM)")
+        try:
+            overlay = get_gradcam_overlay(arr, model, image)
+            st.image(overlay, caption="Heatmap highlighting high-risk regions", use_container_width=True)
+        except Exception as e:
+            st.warning("Visual heatmap generation skipped for this specific model architecture.")
+
+        # History
+        if 'log' not in st.session_state: st.session_state.log = []
+        st.session_state.log.append({"Time": datetime.now().strftime("%H:%M"), "Result": label, "Risk": f"{risk:.1f}%"})
+
+if 'log' in st.session_state and st.session_state.log:
+    with st.expander("View Analysis History"):
+        st.table(pd.DataFrame(st.session_state.log))
+
