@@ -9,13 +9,13 @@ from PIL import Image
 # PAGE CONFIG
 # ======================================================
 st.set_page_config(
-    page_title="OncoVision – Histopathology Patch Analysis",
+    page_title="Breast Cancer AI Diagnostic Suite",
     page_icon="🔬",
     layout="wide"
 )
 
 # ======================================================
-# CUSTOM ATTENTION LAYER (STORES WEIGHTS SAFELY)
+# CUSTOM ATTENTION LAYER
 # ======================================================
 @tf.keras.utils.register_keras_serializable(package="Custom")
 class Attention(tf.keras.layers.Layer):
@@ -41,7 +41,7 @@ class Attention(tf.keras.layers.Layer):
     def call(self, x):
         e = tf.keras.backend.tanh(tf.keras.backend.dot(x, self.W) + self.b)
         a = tf.keras.backend.softmax(e, axis=1)
-        self.last_attention = a  # store attention weights
+        self.last_attention = a
         return tf.keras.backend.sum(x * a, axis=1)
 
     def get_config(self):
@@ -65,7 +65,7 @@ def load_model():
     )
 
 # ======================================================
-# HELPER: FIND ATTENTION LAYER (EVEN IF NESTED)
+# FIND ATTENTION LAYER
 # ======================================================
 def find_attention_layer(model):
     for layer in model.layers:
@@ -79,86 +79,127 @@ def find_attention_layer(model):
     return None
 
 # ======================================================
-# UI HEADER
+# HEADER
 # ======================================================
-st.title("🔬 OncoVision – Histopathology Patch Analyzer")
+st.title("🔬 Breast Cancer AI Diagnostic Suite")
 st.markdown("""
-Patch-level breast tissue analysis using a  
-**CNN + BiLSTM + Attention** architecture.
-
-📌 Visual explanation is provided through **Attention Weights**
+AI-powered histopathology patch analysis using  
+**CNN + BiLSTM + Attention Architecture**
 """)
 st.divider()
 
 # ======================================================
-# MAIN UI
+# CLINICAL 3-COLUMN DASHBOARD
 # ======================================================
-col1, col2 = st.columns(2, gap="large")
+left, center, right = st.columns([1, 2, 1], gap="large")
 
-with col1:
-    st.subheader("📸 Upload Patch Image")
+# ---------------- LEFT PANEL ----------------
+with left:
+    st.markdown("## 👤 Patient Profile")
+
+    st.image(
+        "https://cdn-icons-png.flaticon.com/512/847/847969.png",
+        width=110
+    )
+
+    st.write("**Name:** Mary Johnson")
+    st.write("**Age:** 58")
+    st.write("**Patient ID:** BC-1042")
+
+    st.markdown("---")
+    st.markdown("### 📂 Upload Histopathology Patch")
+
     file = st.file_uploader(
-        "Upload histopathology patch (JPG / PNG)",
+        "Upload Image (JPG / PNG)",
         type=["jpg", "jpeg", "png"]
     )
+
+# ---------------- CENTER PANEL ----------------
+with center:
+    st.markdown("## 🖼 Diagnostic Viewer")
 
     if file:
         image = Image.open(file).convert("RGB")
         st.image(image, use_container_width=True)
+    else:
+        st.info("Upload a histopathology patch to begin analysis.")
 
-with col2:
-    st.subheader("🧠 Model Analysis")
+# ---------------- RIGHT PANEL ----------------
+with right:
+    st.markdown("## 🧠 AI Analysis Panel")
 
-    if file and st.button("🚀 Run Analysis", use_container_width=True):
+    if file:
+        if st.button("🚀 Run Diagnostic", use_container_width=True):
 
-        model = load_model()
+            model = load_model()
 
-        # Preprocessing (PCam-consistent)
-        img_resized = image.resize((96, 96), Image.Resampling.LANCZOS)
-        img_array = np.array(img_resized).astype("float32") / 255.0
-        img_batch = np.expand_dims(img_array, axis=0)
+            # Preprocessing
+            img_resized = image.resize((96, 96), Image.Resampling.LANCZOS)
+            img_array = np.array(img_resized).astype("float32") / 255.0
+            img_batch = np.expand_dims(img_array, axis=0)
 
-        # Inference
-        score = float(model.predict(img_batch, verbose=0)[0][0])
+            # Inference
+            score = float(model.predict(img_batch, verbose=0)[0][0])
 
-        st.markdown("### 📊 Model Output")
-        st.progress(score)
+            st.markdown("### 📊 Malignancy Probability")
+            st.metric("Cancer Risk", f"{score*100:.1f}%")
+            st.progress(score)
 
-        if score >= 0.85:
-            st.error("🟥 Strong tumor-like patterns detected")
-            confidence = "High confidence"
-        elif score <= 0.15:
-            st.success("🟩 No strong tumor-like patterns detected")
-            confidence = "High confidence"
-        else:
-            st.warning("🟨 Uncertain prediction – expert review recommended")
-            confidence = "Low confidence"
-
-        st.caption(f"Raw model score: **{score:.3f}** | {confidence}")
-
-        st.divider()
-
-        # ======================================================
-        # ATTENTION VISUALIZATION
-        # ======================================================
-        with st.expander("🔍 Visual Explanation (Attention Weights)"):
-
-            att_layer = find_attention_layer(model)
-
-            if att_layer and att_layer.last_attention is not None:
-                attention_values = att_layer.last_attention.numpy().squeeze()
-
-                # Normalize for better visualization
-                attention_values = attention_values / (
-                    np.max(attention_values) + 1e-8
-                )
-
-                st.line_chart(attention_values)
-                st.caption(
-                    "Higher peaks indicate sequence regions the model focused on most."
-                )
+            # BI-RADS Logic
+            if score >= 0.75:
+                st.error("🟥 BI-RADS 4 – Suspicious Abnormality")
+                confidence = "High confidence"
+            elif score <= 0.25:
+                st.success("🟩 BI-RADS 2 – Likely Benign")
+                confidence = "High confidence"
             else:
-                st.info("Attention weights not available for this prediction.")
+                st.warning("🟨 BI-RADS 3 – Probably Benign")
+                confidence = "Low confidence"
+
+            st.caption(f"Raw model score: {score:.3f} | {confidence}")
+
+            st.divider()
+
+            # Simulated tissue metrics
+            st.markdown("### 📈 Tissue Characteristics")
+            st.progress(min(score + 0.2, 1.0))
+            st.caption("Tissue Density")
+
+            st.progress(score)
+            st.caption("Mass Margin Irregularity")
+
+            st.divider()
+
+            # Action buttons
+            colA, colB = st.columns(2)
+
+            with colA:
+                st.success("Approve")
+
+            with colB:
+                st.error("Request Biopsy")
+
+            st.divider()
+
+            # ======================================================
+            # ATTENTION VISUALIZATION
+            # ======================================================
+            with st.expander("🔍 Visual Explanation (Attention Weights)"):
+
+                att_layer = find_attention_layer(model)
+
+                if att_layer and att_layer.last_attention is not None:
+                    attention_values = att_layer.last_attention.numpy().squeeze()
+                    attention_values = attention_values / (
+                        np.max(attention_values) + 1e-8
+                    )
+
+                    st.line_chart(attention_values)
+                    st.caption(
+                        "Peaks indicate sequence regions the model focused on most."
+                    )
+                else:
+                    st.info("Attention weights not available.")
 
 # ======================================================
 # SIDEBAR
@@ -175,6 +216,8 @@ st.sidebar.info("""
 
 ⚠️ Educational & research use only.
 """)
+
+
 
 
 
