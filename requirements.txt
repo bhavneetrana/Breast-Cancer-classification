@@ -5,6 +5,8 @@ pillow
 pandas
 reportlab
 opencv-python-headless
+matplotlib
+
 
 
 
