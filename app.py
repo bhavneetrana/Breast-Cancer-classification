@@ -4,7 +4,6 @@ import numpy as np
 import os
 import urllib.request
 from PIL import Image
-import matplotlib.pyplot as plt
 
 # ======================================================
 # PAGE CONFIG
@@ -16,7 +15,7 @@ st.set_page_config(
 )
 
 # ======================================================
-# CUSTOM ATTENTION LAYER (WITH WEIGHT ACCESS)
+# CUSTOM ATTENTION LAYER (STORES WEIGHTS SAFELY)
 # ======================================================
 @tf.keras.utils.register_keras_serializable(package="Custom")
 class Attention(tf.keras.layers.Layer):
@@ -42,7 +41,7 @@ class Attention(tf.keras.layers.Layer):
     def call(self, x):
         e = tf.keras.backend.tanh(tf.keras.backend.dot(x, self.W) + self.b)
         a = tf.keras.backend.softmax(e, axis=1)
-        self.last_attention = a  # <-- STORE ATTENTION WEIGHTS
+        self.last_attention = a  # store attention weights
         return tf.keras.backend.sum(x * a, axis=1)
 
     def get_config(self):
@@ -58,6 +57,7 @@ MODEL_PATH = "cnn_bilstm_attention_model.h5"
 def load_model():
     if not os.path.exists(MODEL_PATH):
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+
     return tf.keras.models.load_model(
         MODEL_PATH,
         custom_objects={"Attention": Attention},
@@ -65,38 +65,33 @@ def load_model():
     )
 
 # ======================================================
-# ATTENTION VISUALIZATION
+# HELPER: FIND ATTENTION LAYER (EVEN IF NESTED)
 # ======================================================
-def plot_attention_weights(att_weights):
-    """
-    Plots attention distribution over sequence steps
-    """
-    att = att_weights.squeeze()
-
-    fig, ax = plt.subplots(figsize=(8, 3))
-    ax.plot(att, color="#ff9800", linewidth=2)
-    ax.set_title("Attention Weight Distribution")
-    ax.set_xlabel("Sequence Step")
-    ax.set_ylabel("Attention Weight")
-    ax.grid(alpha=0.3)
-
-    return fig
+def find_attention_layer(model):
+    for layer in model.layers:
+        if isinstance(layer, Attention):
+            return layer
+        if isinstance(layer, tf.keras.Model):
+            try:
+                return find_attention_layer(layer)
+            except:
+                pass
+    return None
 
 # ======================================================
 # UI HEADER
 # ======================================================
 st.title("🔬 OncoVision – Histopathology Patch Analyzer")
 st.markdown("""
-This system performs **patch-level analysis** using a  
+Patch-level breast tissue analysis using a  
 **CNN + BiLSTM + Attention** architecture.
 
-📌 Visual explanation is provided via **Attention Weights**  
-(not Grad-CAM, which is unsuitable for this architecture).
+📌 Visual explanation is provided through **Attention Weights**
 """)
 st.divider()
 
 # ======================================================
-# UI MAIN
+# MAIN UI
 # ======================================================
 col1, col2 = st.columns(2, gap="large")
 
@@ -115,14 +110,15 @@ with col2:
     st.subheader("🧠 Model Analysis")
 
     if file and st.button("🚀 Run Analysis", use_container_width=True):
+
         model = load_model()
 
-        # --- PREPROCESSING (PCam-consistent) ---
+        # Preprocessing (PCam-consistent)
         img_resized = image.resize((96, 96), Image.Resampling.LANCZOS)
         img_array = np.array(img_resized).astype("float32") / 255.0
         img_batch = np.expand_dims(img_array, axis=0)
 
-        # --- INFERENCE ---
+        # Inference
         score = float(model.predict(img_batch, verbose=0)[0][0])
 
         st.markdown("### 📊 Model Output")
@@ -142,39 +138,45 @@ with col2:
 
         st.divider()
 
-        # --- ATTENTION VISUALIZATION ---
+        # ======================================================
+        # ATTENTION VISUALIZATION
+        # ======================================================
         with st.expander("🔍 Visual Explanation (Attention Weights)"):
-            # Find Attention layer
-            att_layer = None
-            for layer in model.layers:
-                if isinstance(layer, Attention):
-                    att_layer = layer
-                    break
+
+            att_layer = find_attention_layer(model)
 
             if att_layer and att_layer.last_attention is not None:
-                fig = plot_attention_weights(att_layer.last_attention.numpy())
-                st.pyplot(fig)
+                attention_values = att_layer.last_attention.numpy().squeeze()
+
+                # Normalize for better visualization
+                attention_values = attention_values / (
+                    np.max(attention_values) + 1e-8
+                )
+
+                st.line_chart(attention_values)
                 st.caption(
-                    "Peaks indicate sequence regions the model focused on most."
+                    "Higher peaks indicate sequence regions the model focused on most."
                 )
             else:
-                st.info("Attention weights not available for this input.")
+                st.info("Attention weights not available for this prediction.")
 
 # ======================================================
 # SIDEBAR
 # ======================================================
 st.sidebar.title("ℹ️ System Information")
 st.sidebar.info("""
-**Model**
-- CNN + BiLSTM + Attention
-- Trained on PCam (PatchCamelyon)
+**Model Architecture**
+- CNN
+- Bidirectional LSTM
+- Attention Mechanism
 
-**Explainability**
-- Attention visualization (primary)
-- Grad-CAM intentionally disabled
+**Dataset**
+- PatchCamelyon (PCam)
 
-⚠️ Educational & research use only
+⚠️ Educational & research use only.
 """)
+
+
 
 
 
