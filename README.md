@@ -1,4 +1,4 @@
-# Breast Cancer Classification Using Deep Learning
+# Breast Cancer Classification 
 
 This project implements a CNN–BiLSTM–Attention based deep learning model for breast cancer classification using histopathology images.
 
